@@ -5,14 +5,15 @@ A quick sketch to demonstrate uploading library trip material.
 import requests
 import json
 import urllib
-import sys
+import sys, os
 import subprocess
-from PIL import Image
+from PIL import Image, ImageFilter
 
+USERNAME = "LibraryTripperBot"
 API_URL = "http://wikipaltz.org/api.php"
-s = requests.Session()
 
-FILENAME = sys.argv[1]
+DIRECTORY = sys.argv[1]
+COLUMN_TOLERANCE = 600
 
 def show_userinfo():
 	more_params = dict(action="query", meta="userinfo", format="json")
@@ -20,10 +21,10 @@ def show_userinfo():
 	print r.content
 
 
-def login(session):
+def login(session=requests.Session()):
 
 	login_params = dict(action="login",
-		            lgname="LibraryTripperBot",
+		            lgname=USERNAME,
 		            lgpassword=None, # Replace with password
 		            format="json")
 
@@ -86,7 +87,7 @@ def edit(edit_token):
 	print edit_response.headers
 
 
-def upload(file, text):
+def upload(file, text, session=requests.Session()):
     files = {'file': open(file, 'rb')}
     token = get_edit_token(file)
     print "Got edit token %s.  Now uploading." % token
@@ -98,11 +99,11 @@ def upload(file, text):
                          token=token)
 
     print upload_params
-    upload_response = s.post(API_URL, params=upload_params, files=files)
+    upload_response = session.post(API_URL, params=upload_params, files=files)
     return upload_response
 
 
-def ocr_read(program="tesseract", filename):
+def ocr_read(filename, program="tesseract"):
 
 	print "Starting %s Read." % program
 
@@ -122,23 +123,111 @@ def ocr_read(program="tesseract", filename):
 
 
 def resize(filename):
+    '''
+    
+    '''
     size = 1600,1600
     im = Image.open(filename)
     im.thumbnail(size, Image.ANTIALIAS)
     im.save("%s-resized.jpg" % filename, "JPEG")
 
-login(s)
+    return im
+
+
+def find_column(filename=None, image=None, tolerance=COLUMN_TOLERANCE):
+    hit_pixels = {}
+    detected_columns = []
+
+    if not image:
+        image = Image.open(filename)
+    width, height = image.size
+    rgb_im = image.convert('RGB')
+
+
+    # We only want to scan the middle of the image.
+    left_start = (width / 2) - 400
+    right_end = (width / 2) + 400
+
+    for w in range(left_start, right_end):
+        for h in range(height):
+            r, g, b = rgb_im.getpixel((w, h))
+        
+            if (r + g + b) < tolerance:
+                # hit!
+                try:
+                     hit_pixels[w].append(h)
+                except KeyError:
+                     hit_pixels[w] = [h]
+
+                # We only want columns that consistently hit down the page.
+                if len(hit_pixels[w]) > 4:
+                    # print "hit pixels: %s" % hit_pixels[w] # debug
+                    detected_columns.append(w)
+                    break
+
+
+    # Ensure that we only have one column    
+    previous_c = None
+    for c in detected_columns:
+        if previous_c and not (c - previous_c) < 2:
+            print "Tolerance too high for %s. Columns detected at %s" % (image, detected_columns)
+            return find_column(image=image, tolerance=tolerance-20)
+        previous_c = c
+
+    # Great.  We only have one.  Is it huge?
+    if len(detected_columns) > 5:
+        mid_column = len(detected_columns) / 2
+        
+        # If it is, take only the middle of it.
+        detected_columns = detected_columns[(mid_column - 2):(mid_column + 2)]
+
+    # return the left and rightmost edges of the line
+    try:
+	left = detected_columns[0] - 3
+	right = detected_columns[-1] + 3
+    except IndexError:
+        raise RuntimeError('No columns found.  Hit pixels: %s' % hit_pixels)
+    return left, right
+
+
+def split_vertical(filename):
+    image = Image.open(filename)
+    width, height = image.size    
+
+    left, right = find_column(image=image)
+    left_crop = image.crop((0, 0, left, height))
+    right_crop = image.crop((right, 0, width, height))
+
+    left_crop.save('left-%s.jpg' % filename.split('/')[-1])
+    right_crop.save('right-%s.jpg' % filename.split('/')[-1])
+
+
+        
+    
+
+for filename in os.listdir(DIRECTORY):
+    print "trying %s" % filename
+    split_vertical(DIRECTORY + filename)
+
+
+
+exit()
+
+
+session = login(s)
                        
 
 if "==NOCR==" in FILENAME:
-    file_test = "[[Category:No OCR]]
+    file_text = "[[Category:No OCR]]"
 else:
     file_text = "==Tesseract OCR Result==\n%s\
 		  \n==Cuneiform OCR Result==\n%s\
 		  \n[[Category:Uncurated Images]][[Category:OCR]]" % (ocr_read(), ocr_read(program="cuneiform"))
 
 
+
+
 resize()
-print upload("%s-resized.jpg" % FILENAME, file_text).content
+print upload("%s-resized.jpg" % FILENAME, file_text, session=session).content
 
 
