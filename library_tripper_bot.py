@@ -9,23 +9,52 @@ import sys, os
 import subprocess
 from PIL import Image, ImageFilter
 
-USERNAME = "LibraryTripperBot"
-API_URL = "http://wikipaltz.org/api.php"
+import logging
+import operator
+logger = logging.getLogger('tripperbot')
+hdlr = logging.FileHandler('tripperbot.log')
+formatter = logging.Formatter('%(asctime)s %(levelname)s %(message)s')
+hdlr.setFormatter(formatter)
+logger.addHandler(hdlr) 
+logger.setLevel(logging.INFO)
 
+
+USERNAME = "LibraryTripperBot"
+PASSWORD = None
+
+API_URL = "http://wikipaltz.org/api.php"
 DIRECTORY = sys.argv[1]
-COLUMN_TOLERANCE = 600
+
+
+# Settings
+
+SCAN_WIDTH = 100  # How far on either side of the middle we'll scan
+DARK_PIXEL_LIMIT = 90 # Set to -1 to disable
+
+COLUMN_TOLERANCE = 380
+OUTPUT_SIZE = 1600
+
+VARIANCE_LIMIT = 170 # How much can one pixel differ from the one above it?
+ALLOWED_VARIANCES = 3 # How many variances are allowed per column
+
+STREAK_ANNOUNCE = 30  # The number of consecutive hits required to generate a log entry.  No effect on result.
+
+HIT_LIMIT = 8000
 
 def show_userinfo():
-	more_params = dict(action="query", meta="userinfo", format="json")
-	r = s.get(API_URL, params=more_params)
-	print r.content
+    '''
+    Prints information about the logged-in user.
+    '''
+    more_params = dict(action="query", meta="userinfo", format="json")
+    r = s.get(API_URL, params=more_params)
+    print r.content
 
 
-def login(session=requests.Session()):
+def login(username, password, session=requests.Session()):
 
 	login_params = dict(action="login",
-		            lgname=USERNAME,
-		            lgpassword=None, # Replace with password
+		            lgname=username,
+		            lgpassword=password, # Replace with password
 		            format="json")
 
 	response = s.post(API_URL, params=login_params)
@@ -47,9 +76,8 @@ def login(session=requests.Session()):
 	return session
 
 
-def get_edit_token(name):
-        print
-        print "Obtaining edit token:"
+def get_edit_token(page_name):
+
 	get_edit_token_params = dict(action="query",
 		           format="json",
 		           prop="info",
@@ -87,7 +115,13 @@ def edit(edit_token):
 	print edit_response.headers
 
 
-def upload(file, text, session=requests.Session()):
+def upload(filename, text, session=requests.Session()):
+    '''
+    Takes a filename, description text, and Session object.
+    Uploads a file to API_URL.
+    
+    Returns Response object.
+    '''
     files = {'file': open(file, 'rb')}
     token = get_edit_token(file)
     print "Got edit token %s.  Now uploading." % token
@@ -104,29 +138,34 @@ def upload(file, text, session=requests.Session()):
 
 
 def ocr_read(filename, program="tesseract"):
+    '''
+    Takes a filename of an image.
+    
+    Reads text in the image using either tesseract or cuneiform.
+    '''
 
-	print "Starting %s Read." % program
+    print "Starting %s Read." % program
 
-        if program == "tesseract":
-            p = subprocess.Popen('tesseract "%s" output-t' % filename, shell=True, stdout=subprocess.PIPE)
+    if program == "tesseract":
+        p = subprocess.Popen('tesseract "%s" output-t' % filename, shell=True, stdout=subprocess.PIPE)
 
-	elif program == "cuneiform":
-            p = subprocess.Popen('cuneiform "%s" -o output-c.txt' % filename, shell=True, stdout=subprocess.PIPE)
-        else:
-            raise ValueError("Don't know how to implement %s - use either tesseract (default) or cuneiform" % program)
+    elif program == "cuneiform":
+        p = subprocess.Popen('cuneiform "%s" -o output-c.txt' % filename, shell=True, stdout=subprocess.PIPE)
+    else:
+        raise ValueError("Don't know how to implement %s - use either tesseract (default) or cuneiform" % program)
 	
-        out, err = p.communicate()
-	print out, err
+    out, err = p.communicate()	
+    print out, err
 
-        result = open('output-%s.txt' % program[0], "r").read()
-        return result
+    result = open('output-%s.txt' % program[0], "r").read()
+    return result
 
 
 def resize(filename):
     '''
     
     '''
-    size = 1600,1600
+    size = OUTPUT_SIZE, OUTPUT_SIZE
     im = Image.open(filename)
     im.thumbnail(size, Image.ANTIALIAS)
     im.save("%s-resized.jpg" % filename, "JPEG")
@@ -134,87 +173,169 @@ def resize(filename):
     return im
 
 
-def find_column(filename=None, image=None, tolerance=COLUMN_TOLERANCE):
-    hit_pixels = {}
-    detected_columns = []
-
-    if not image:
-        image = Image.open(filename)
+def get_pixel_values(image, left_edge, right_edge, variance_limit=VARIANCE_LIMIT, rlimit=None, llimit=None):
+    '''
+    Takes an image and starting edges, returns a dict:
+       keys are column numbers
+       values lists of 2-tuples: (row number, rgb value) 
+    '''
+    
+    
+    width = abs(left_edge - right_edge)
+    if width < (SCAN_WIDTH / 3):
+        logger.warning("Scan too narrow with variance_limit %s.  Raising." % variance_limit)
+        left_edge, right_edge = get_starting_edges(image)
+        return get_pixel_values(image, left_edge, right_edge, variance_limit=variance_limit + 30)
+    
+    
+    
+    logger.info("We'll scan %s columns from %s to %s" % (width, left_edge, right_edge))
     width, height = image.size
     rgb_im = image.convert('RGB')
+    
+    pixel_dict = {}
+    variances = {}
+    
+    for column in range(left_edge, right_edge): 
+        variance_count = 0
+        pixel_dict[column] = []
+        last_value = None
+        
+        for row in range(int(height * .2), int(height * .5)):
+            r, g, b = rgb_im.getpixel((column, row))
+            value = r + g + b
+            
+            if last_value and abs(value - last_value) > VARIANCE_LIMIT:
+                variance_count += 1
+                if abs(value - last_value) > VARIANCE_LIMIT * 1.5:
+                    logger.warning("Found variance of %s (whoa!) in column %s, row %s" % (abs(value - last_value), column, row) )
+            
+            if value < DARK_PIXEL_LIMIT: # If we hit a very dark pixel, we'll assume it's text.  Shift to the right or left.
+                logger.warning("Very dark pixel (%s) found at column %s, row %s" % (value, column, row))
 
+            if variance_count > ALLOWED_VARIANCES:
+                logger.warning("More than %s variances found in column %s.  Shifting to avoid text." % (ALLOWED_VARIANCES, column))
+                
+            if (value < DARK_PIXEL_LIMIT) or (variance_count > ALLOWED_VARIANCES):
+                # First, figure out whether it's the left or right.
+                
+                nearest = min([left_edge, 
+                               right_edge], key=lambda x:abs(x-column))
+                
+                if nearest == right_edge: # Moving left
+                    rlimit = column - 5
+                    left_edge = max(left_edge - SCAN_WIDTH / 4, llimit)
+                    right_edge -= SCAN_WIDTH / 2
+                else: # Moving right
+                    llimit = column + 5
+                    left_edge += SCAN_WIDTH / 2
+                    right_edge = min(right_edge + SCAN_WIDTH / 4,
+                                     rlimit or right_edge + SCAN_WIDTH / 4)
+
+                return get_pixel_values(image, left_edge, right_edge, variance_limit=variance_limit, rlimit=rlimit, llimit=llimit)
+                
+            last_value = value
+            
+            pixel_dict[column].append((row, value))
+
+    return pixel_dict
+
+
+
+def detect_column(pixel_data, tolerance):
+    
+    logger.info("Detecting column from data on %s columns at %s tolerance" % (len(pixel_data), tolerance))
+    
+    hit_pixels = {}
+    detected_columns = []
+    total_hits = 0
+    streaks = {}
+
+    for column, row_info in pixel_data.items():
+        last_hit = 0
+        last_value = 0
+        streaks[column] = 0, 0
+        
+        streak = 0
+        for row, value in row_info:
+            if value < tolerance:
+                # hit!
+                total_hits += 1
+                streak += 1
+                if streak > streaks[column][0]:
+                    streaks[column] = streak, row
+                last_hit = row
+            else:
+                # No hit.
+                if streak > STREAK_ANNOUNCE:
+                    logger.info("Breaking streak of %s on column %s at row %s." % (streak, column, row))
+                streak = 0
+        
+    best_column, (longest_streak, ending_row) = max(streaks.iteritems(), key=operator.itemgetter(1))
+    
+    logger.info("Longest streak: %s in column %s ending at row %s" % (longest_streak, best_column, ending_row))
+    
+    if total_hits > HIT_LIMIT:
+        logger.warning("Too many hits (%s) at tolerance %s." % (total_hits, tolerance))
+        return detect_column(pixel_data, tolerance - 20)
+    
+    logger.info("Total hits: %s" % total_hits)
+    return best_column
+
+
+
+def get_starting_edges(image):
+    width, height = image.size
 
     # We only want to scan the middle of the image.
-    left_start = (width / 2) - 400
-    right_end = (width / 2) + 400
-
-    for w in range(left_start, right_end):
-        for h in range(height):
-            r, g, b = rgb_im.getpixel((w, h))
-        
-            if (r + g + b) < tolerance:
-                # hit!
-                try:
-                     hit_pixels[w].append(h)
-                except KeyError:
-                     hit_pixels[w] = [h]
-
-                # We only want columns that consistently hit down the page.
-                if len(hit_pixels[w]) > 4:
-                    # print "hit pixels: %s" % hit_pixels[w] # debug
-                    detected_columns.append(w)
-                    break
-
-
-    # Ensure that we only have one column    
-    previous_c = None
-    for c in detected_columns:
-        if previous_c and not (c - previous_c) < 2:
-            print "Tolerance too high for %s. Columns detected at %s" % (image, detected_columns)
-            return find_column(image=image, tolerance=tolerance-20)
-        previous_c = c
-
-    # Great.  We only have one.  Is it huge?
-    if len(detected_columns) > 5:
-        mid_column = len(detected_columns) / 2
-        
-        # If it is, take only the middle of it.
-        detected_columns = detected_columns[(mid_column - 2):(mid_column + 2)]
-
-    # return the left and rightmost edges of the line
-    try:
-	left = detected_columns[0] - 3
-	right = detected_columns[-1] + 3
-    except IndexError:
-        raise RuntimeError('No columns found.  Hit pixels: %s' % hit_pixels)
+    left = (width / 2) - SCAN_WIDTH
+    right = (width / 2) + SCAN_WIDTH
+    
     return left, right
+
+
+def find_column_from_image(filename=None, image=None, tolerance=COLUMN_TOLERANCE):
+    
+    if not image:
+        image = Image.open(filename)
+
+
+    left_start, right_end = get_starting_edges(image)
+
+    
+    pixel_dict = get_pixel_values(image, left_start, right_end)
+    result = detect_column(pixel_dict, tolerance)
+
+    
+    return result
 
 
 def split_vertical(filename):
     image = Image.open(filename)
     width, height = image.size    
 
-    left, right = find_column(image=image)
-    left_crop = image.crop((0, 0, left, height))
-    right_crop = image.crop((right, 0, width, height))
+    column = find_column_from_image(image=image)
+    logger.info("Found column at %s" % (column))
+    left_crop = image.crop((0, 0, column, height))
+    right_crop = image.crop((column, 0, width, height))
 
-    left_crop.save('left-%s.jpg' % filename.split('/')[-1])
-    right_crop.save('right-%s.jpg' % filename.split('/')[-1])
+    left_crop.save('output/%s-left.jpg' % filename.split('/')[-1])
+    right_crop.save('output/%s-right.jpg' % filename.split('/')[-1])
 
 
-        
-    
+
 
 for filename in os.listdir(DIRECTORY):
-    print "trying %s" % filename
+    logger.info("Starting %s" % filename)
     split_vertical(DIRECTORY + filename)
+    logger.info("Finished %s" % filename)
 
 
 
 exit()
 
 
-session = login(s)
+session = login(USERNAME, PASSWORD, s)
                        
 
 if "==NOCR==" in FILENAME:
