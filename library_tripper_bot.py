@@ -57,7 +57,7 @@ def login(username, password, session=requests.Session()):
 		            lgpassword=password, # Replace with password
 		            format="json")
 
-	response = s.post(API_URL, params=login_params)
+	response = session.post(API_URL, params=login_params)
 	response_dict = json.loads(response.content)
 
 
@@ -66,7 +66,7 @@ def login(username, password, session=requests.Session()):
 
 	login_params['lgtoken'] = response_dict['login']['token']
 
-	second_response = s.post(API_URL, params=login_params)
+	second_response = session.post(API_URL, params=login_params)
 	response_dict = json.loads(second_response.content)
 
 	print
@@ -76,19 +76,19 @@ def login(username, password, session=requests.Session()):
 	return session
 
 
-def get_edit_token(page_name):
+def get_edit_token(page_name, session):
 
 	get_edit_token_params = dict(action="query",
-		           format="json",
-		           prop="info",
-		           intoken="edit",
-                           titles=name,
-		           )
+                                 format="json",
+                                 prop="info",
+                                 intoken="edit",
+                                 titles=page_name,
+                                 )
 
-	if name:
-            get_edit_token_params['titles'] = name
+	if page_name:
+            get_edit_token_params['titles'] = page_name
 
-	edit_token_response = s.post(API_URL, params=get_edit_token_params)
+	edit_token_response = session.post(API_URL, params=get_edit_token_params)
 	response_dict = json.loads(edit_token_response.content)
 
         print edit_token_response.content
@@ -122,13 +122,13 @@ def upload(filename, text, session=requests.Session()):
     
     Returns Response object.
     '''
-    files = {'file': open(file, 'rb')}
-    token = get_edit_token(file)
+    files = {'file': open(filename, 'rb')}
+    token = get_edit_token(filename, session)
     print "Got edit token %s.  Now uploading." % token
     upload_params = dict(action="upload",
                          format="json",
                          ignorewarnings="true",
-                         filename=file,
+                         filename=filename,
                          text=text,
                          token=token)
 
@@ -162,9 +162,6 @@ def ocr_read(filename, program="tesseract"):
 
 
 def resize(filename):
-    '''
-    
-    '''
     size = OUTPUT_SIZE, OUTPUT_SIZE
     im = Image.open(filename)
     im.thumbnail(size, Image.ANTIALIAS)
@@ -325,30 +322,34 @@ def split_vertical(filename):
 
 
 
+
+
+
+
+session = login(USERNAME, PASSWORD)
+
 for filename in os.listdir(DIRECTORY):
-    logger.info("Starting %s" % filename)
-    split_vertical(DIRECTORY + filename)
-    logger.info("Finished %s" % filename)
+    
+    full_path = DIRECTORY + filename
+
+    if "==NOCR==" in filename:
+        file_text = "[[Category:No OCR]][[Category:Uncurated Images]]"
+    else:
+        file_text = "==Tesseract OCR Result==\n%s\
+    		  \n==Cuneiform OCR Result==\n%s\
+    		  \n[[Category:Uncurated Images]][[Category:OCR]]" % (ocr_read(full_path), ocr_read(full_path, program="cuneiform"))
+
+    if "==PLU==" in filename:
+        file_text += "[[Category:Human Attention Needed]]"
+    
+    if '==SJ==' in filename:
+        file_text += "[[Category:Social Justice]]"
+    
+    if "==SH==" in filename:
+        file_text += "[[Category:Student Housing]]"
 
 
-
-exit()
-
-
-session = login(USERNAME, PASSWORD, s)
-                       
-
-if "==NOCR==" in FILENAME:
-    file_text = "[[Category:No OCR]]"
-else:
-    file_text = "==Tesseract OCR Result==\n%s\
-		  \n==Cuneiform OCR Result==\n%s\
-		  \n[[Category:Uncurated Images]][[Category:OCR]]" % (ocr_read(), ocr_read(program="cuneiform"))
-
-
-
-
-resize()
-print upload("%s-resized.jpg" % FILENAME, file_text, session=session).content
+    resize(DIRECTORY + filename)
+    upload("%s-resized.jpg" % full_path, file_text, session=session).content
 
 
