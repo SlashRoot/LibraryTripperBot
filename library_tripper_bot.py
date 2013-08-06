@@ -11,6 +11,8 @@ from PIL import Image, ImageFilter
 
 import logging
 import operator
+
+# Logging copypasta
 logger = logging.getLogger('tripperbot')
 hdlr = logging.FileHandler('tripperbot.log')
 formatter = logging.Formatter('%(asctime)s %(levelname)s %(message)s')
@@ -51,68 +53,83 @@ def show_userinfo():
 
 
 def login(username, password, session=requests.Session()):
+    '''
+    Takes strings username and password
+    
+    Logs in session with provided credentials.
+    
+    returns session object
+    '''
+    login_params = dict(action="login",
+        lgname=username,
+        lgpassword=password,
+        format="json")
 
-	login_params = dict(action="login",
-		            lgname=username,
-		            lgpassword=password, # Replace with password
-		            format="json")
-
-	response = session.post(API_URL, params=login_params)
-	response_dict = json.loads(response.content)
+    response = session.post(API_URL, params=login_params)
+    response_dict = json.loads(response.content)
 
 
-	print "Getting login token:"
-	print response_dict
+    print "Getting login token:"
+    print response_dict
 
-	login_params['lgtoken'] = response_dict['login']['token']
+    login_params['lgtoken'] = response_dict['login']['token']
 
-	second_response = session.post(API_URL, params=login_params)
-	response_dict = json.loads(second_response.content)
+    second_response = session.post(API_URL, params=login_params)
+    response_dict = json.loads(second_response.content)
 
-	print
-	print "Attempted to login:"
-	print response_dict
+    print
+    print "Attempted to login:"
+    print response_dict
 
-	return session
+    return session
 
 
 def get_edit_token(page_name, session):
+    '''
+    In order to edit a page, you need an edit token for your session.
+    This takes a session and string page_name and returns such a token.
+    '''
 
-	get_edit_token_params = dict(action="query",
+    get_edit_token_params = dict(action="query",
                                  format="json",
                                  prop="info",
                                  intoken="edit",
                                  titles=page_name,
                                  )
 
-	if page_name:
+    if page_name:
             get_edit_token_params['titles'] = page_name
 
-	edit_token_response = session.post(API_URL, params=get_edit_token_params)
-	response_dict = json.loads(edit_token_response.content)
+    edit_token_response = session.post(API_URL, params=get_edit_token_params)
+    response_dict = json.loads(edit_token_response.content)
 
-        print edit_token_response.content
-	edit_token = response_dict['query']['pages']['-1']['edittoken']
-	return edit_token
+    print edit_token_response.content
+    edit_token = response_dict['query']['pages']['-1']['edittoken']
+    return edit_token
 
 
 def edit(edit_token):
+    '''
+    Janky and needs help, but has promise.
+    
+    Takes an edit_token, edits the LibraryTriiperBot's User page on WikiPaltz.
+    '''
 
-	edit_params = dict(action="edit",
-		           title="User:LibraryTripperBot",
-		           format="json",
-		           summary="I'm alive!",
-		           text="Hi.  I'm slashRoot's Library Tripper Bot.  I automate the process of getting content gathered at library trips up on WikiPaltz.",
-		           token=edit_token)
+    edit_params = dict(action="edit",
+        title="User:LibraryTripperBot",
+        format="json",
+        summary="I'm alive!",
+        text="Hi.  I'm slashRoot's Library Tripper Bot.  I automate the process of getting content gathered at library trips up on WikiPaltz.",
+        token=edit_token)
 
-	print s.headers
-	s.headers.update({"Content-Type":"application/x-www-form-urlencoded"})
+    print s.headers
+    s.headers.update({"Content-Type":"application/x-www-form-urlencoded"})
 
-	edit_response = s.post(API_URL, params=edit_params)
-	response_dict = json.loads(edit_response.content)
+    edit_response = s.post(API_URL, params=edit_params)
+    response_dict = json.loads(edit_response.content)
 
-	print response_dict
-	print edit_response.headers
+    print response_dict
+    print edit_response.headers
 
 
 def upload(filename, text, session=requests.Session()):
@@ -153,7 +170,7 @@ def ocr_read(filename, program="tesseract"):
         p = subprocess.Popen('cuneiform "%s" -o output-c.txt' % filename, shell=True, stdout=subprocess.PIPE)
     else:
         raise ValueError("Don't know how to implement %s - use either tesseract (default) or cuneiform" % program)
-	
+
     out, err = p.communicate()	
     print out, err
 
@@ -162,6 +179,11 @@ def ocr_read(filename, program="tesseract"):
 
 
 def resize(filename):
+    '''
+    Takes string filename, returns Image object
+    
+    Resizes the file to no larger than OUTPUT_SIZE x OUTPUT_SIZE
+    '''
     size = OUTPUT_SIZE, OUTPUT_SIZE
     im = Image.open(filename)
     im.thumbnail(size, Image.ANTIALIAS)
@@ -240,6 +262,12 @@ def get_pixel_values(image, left_edge, right_edge, variance_limit=VARIANCE_LIMIT
 
 
 def detect_column(pixel_data, tolerance):
+    '''
+    Takes ints pixel_data and tolerance
+    
+    returns int of best column
+    '''
+    
     
     logger.info("Detecting column from data on %s columns at %s tolerance" % (len(pixel_data), tolerance))
     
@@ -282,6 +310,10 @@ def detect_column(pixel_data, tolerance):
 
 
 def get_starting_edges(image):
+    '''
+    Takes image, uses SCAN_WIDTH to figure out where to start and end.
+    Return tuple of ints left and right
+    '''
     width, height = image.size
 
     # We only want to scan the middle of the image.
@@ -292,22 +324,37 @@ def get_starting_edges(image):
 
 
 def find_column_from_image(filename=None, image=None, tolerance=COLUMN_TOLERANCE):
+    '''
+    Higher level function.
     
+    Takes either image, an Image object or filename, a str
+    Open files, bats it around with the above functions
+    to figure out where its column is.
+    
+    Returns int result (the pixel number of the column) 
+    '''
     if not image:
         image = Image.open(filename)
 
 
     left_start, right_end = get_starting_edges(image)
 
-    
+
     pixel_dict = get_pixel_values(image, left_start, right_end)
     result = detect_column(pixel_dict, tolerance)
 
-    
     return result
 
 
 def split_vertical(filename):
+    '''
+    Takes string filename
+    Splits into two images by finding column
+    
+    Saves them as filename-left.jpg and filename-right.jpg
+    
+    returns left and right Image objects
+    '''
     image = Image.open(filename)
     width, height = image.size    
 
@@ -318,18 +365,27 @@ def split_vertical(filename):
 
     left_crop.save('output/%s-left.jpg' % filename.split('/')[-1])
     right_crop.save('output/%s-right.jpg' % filename.split('/')[-1])
+    
+    return left_crop, right_crop
 
 
 
-
-
-
+# Main
 
 
 session = login(USERNAME, PASSWORD)
 
 for filename in os.listdir(DIRECTORY):
-    
+
+    # NOT IMPLEMENTED
+    #if "==BLAHBLAH==" in filename:
+    #    left, right = split_vertical(filename)
+
+
+
+
+    # First let's split this file vertically
+
     full_path = DIRECTORY + filename
 
     if "==NOCR==" in filename:
