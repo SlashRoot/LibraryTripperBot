@@ -43,12 +43,14 @@ STREAK_ANNOUNCE = 30  # The number of consecutive hits required to generate a lo
 
 HIT_LIMIT = 8000
 
+
+
 def show_userinfo():
     '''
     Prints information about the logged-in user.
     '''
     more_params = dict(action="query", meta="userinfo", format="json")
-    r = s.get(API_URL, params=more_params)
+    r = session.get(API_URL, params=more_params)
     print r.content
 
 
@@ -112,7 +114,7 @@ def edit(edit_token):
     '''
     Janky and needs help, but has promise.
     
-    Takes an edit_token, edits the LibraryTriiperBot's User page on WikiPaltz.
+    Takes an edit_token, edits the LibraryTripperBot's User page on WikiPaltz.
     '''
 
     edit_params = dict(action="edit",
@@ -122,10 +124,10 @@ def edit(edit_token):
         text="Hi.  I'm slashRoot's Library Tripper Bot.  I automate the process of getting content gathered at library trips up on WikiPaltz.",
         token=edit_token)
 
-    print s.headers
-    s.headers.update({"Content-Type":"application/x-www-form-urlencoded"})
+    print session.headers
+    session.headers.update({"Content-Type":"application/x-www-form-urlencoded"})
 
-    edit_response = s.post(API_URL, params=edit_params)
+    edit_response = session.post(API_URL, params=edit_params)
     response_dict = json.loads(edit_response.content)
 
     print response_dict
