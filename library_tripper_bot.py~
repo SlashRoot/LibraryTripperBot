@@ -193,7 +193,7 @@ def resize(filename):
 	im.save("%s-resized.jpg" % filename, "JPEG")
         return im
     except IOError:
-        pass
+        print "Hey Dumbass!"
     return None
 
 
@@ -396,6 +396,7 @@ for filename in os.listdir(DIRECTORY):
             resized = resize(DIRECTORY + filename)
 
             if not resized:
+                print "Dumbass" 
                 continue
   
             if "==NOCR==" in filename:
