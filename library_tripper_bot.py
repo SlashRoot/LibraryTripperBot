@@ -26,8 +26,11 @@ USERNAME = "LibraryTripperBot"
 PASSWORD = None
 
 API_URL = "http://wikipaltz.org/api.php"
-DIRECTORY = '/home/%s/Pictures/' % 'dominick'
 
+try:
+    DIRECTORY = sys.argv[1]
+except IndexError:
+    DIRECTORY = '/home/%s/Pictures' % raw_input("What is your terminal username? ")
 # Settings
 
 SCAN_WIDTH = 100  # How far on either side of the middle we'll scan
