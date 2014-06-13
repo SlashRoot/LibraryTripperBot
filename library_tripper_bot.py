@@ -13,6 +13,10 @@ from PIL import Image, ImageFilter
 import logging
 import operator
 
+import numpy
+#import matplotlib.pyplot as plt
+
+
 # Logging copypasta
 logger = logging.getLogger('tripperbot')
 hdlr = logging.FileHandler('tripperbot.log')
@@ -27,17 +31,19 @@ PASSWORD = None
 
 API_URL = "http://wikipaltz.org/api.php"
 
-try:
-    DIRECTORY = sys.argv[1]
-except IndexError:
-    DIRECTORY = '/home/%s/Pictures' % raw_input("What is your terminal username? ")
-# Settings
+
+DIRECTORY = sys.argv[1]
+
+
+IMAGE_BELIEF_THRESHOLD = None
+CONSECUTIVE_HITS_FOR_CONFIRM = None
+
 
 SCAN_WIDTH = 100  # How far on either side of the middle we'll scan
 DARK_PIXEL_LIMIT = 90 # Set to -1 to disable
 
 COLUMN_TOLERANCE = 380
-OUTPUT_SIZE = 1600
+OUTPUT_SIZE = 400
 
 VARIANCE_LIMIT = 170 # How much can one pixel differ from the one above it?
 ALLOWED_VARIANCES = 3 # How many variances are allowed per column
@@ -200,14 +206,16 @@ def resize(filename):
     return None
 
 
-def get_pixel_values(image, left_edge, right_edge, variance_limit=VARIANCE_LIMIT, rlimit=None, llimit=None):
+def get_pixel_values(image, left_edge=None, right_edge=None, variance_limit=VARIANCE_LIMIT, rlimit=None, llimit=None):
     '''
     Takes an image and starting edges, returns a dict:
        keys are column numbers
-       values lists of 2-tuples: (row number, rgb value) 
+       values are lists of 2-tuples: (row number, rgb value) 
     '''
-    
-    
+    if not (left_edge and right_edge):
+        left_edge = 0
+        right_edge = 100 # TODO: Obviously dumb.
+        
     width = abs(left_edge - right_edge)
     if width < (SCAN_WIDTH / 3):
         logger.warning("Scan too narrow with variance_limit %s.  Raising." % variance_limit)
@@ -266,6 +274,46 @@ def get_pixel_values(image, left_edge, right_edge, variance_limit=VARIANCE_LIMIT
             pixel_dict[column].append((row, value))
 
     return pixel_dict
+
+
+def detect_vertical_streaks(pixel_data, tolerance):
+    '''
+    Iterate through pixel_data.
+    
+    x is the horizontal position.
+    We iterate through the pixels match x, with y at the vertical position.
+    '''
+    streaks = {} # Will be a dict where key is 2-tuple (x, y), value will be int of how long
+    streak_starting_position = None
+    
+    # Iterate through columns, left to right.
+    for x, row_info in pixel_data.items():
+        # Iterate through rows within column, top to bottom.
+        for y, rgb_value in row_info:
+            
+            # Set streak to our current running streak or None
+            streak = streaks.get[streak_starting_position]
+            
+            hit = rgb_value < tolerance
+            
+            if hit:
+                if streak:
+                    # We're adding to an existing streak.
+                    streak += 1
+                else:
+                    # NEW STREAK!
+                    streak_starting_position = (x,y)
+                    streaks[streak_starting_position] = 1
+            else:  # Miss
+                streak_starting_position = None
+                if streak:
+                    # We're breaking a streak.
+                    if streak > STREAK_ANNOUNCE:
+                        logger.info("Breaking streak of %s on column %s at row %s." % (streak, x, y))
+                else:
+                    # We haven't yet found our first streak.
+                    pass
+
 
 
 
@@ -379,6 +427,43 @@ def split_vertical(filename):
 
 
 # Main
+
+import cv2
+import numpy as np
+
+
+for filename in os.listdir(DIRECTORY):
+    full_path = DIRECTORY + filename
+#    image = resize(full_path)
+
+    print full_path
+    img = cv2.imread(full_path)
+    gray = cv2.cvtColor(img,cv2.COLOR_BGR2GRAY)
+
+    for edger in range(200, 300, 10):
+        edges = cv2.Canny(gray,250,edger,apertureSize = 3)
+        cv2.imwrite('%s/output/%s-edges-%s' % (DIRECTORY, filename, edger), edges)
+    continue
+
+    lines = cv2.HoughLines(edges,1,np.pi/180,120)
+
+    for rho,theta in lines[0]:
+        a = np.cos(theta)
+        b = np.sin(theta)
+        x0 = a*rho
+        y0 = b*rho
+        x1 = int(x0 + 1000*(-b))
+        y1 = int(y0 + 1000*(a))
+        x2 = int(x0 - 1000*(-b))
+        y2 = int(y0 - 1000*(a))
+    
+        cv2.line(img,(x1,y1),(x2,y2),(0,0,255),2)
+
+    cv2.imwrite('%s-blah' % full_path,img)
+
+exit()
+
+##############################
 
 
 session = login(USERNAME, PASSWORD)
